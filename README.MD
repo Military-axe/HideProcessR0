@@ -4,14 +4,32 @@ Break the node in `EPROCESS->ActiveProcessLinks` to hide the process
 
 ## Usage
 
+### Hide Process By Break Chain
+
 IO Control code 0x6666
 
-```
+```c
 #define IOCTL_HIDE_BY_PID \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x6666, METHOD_BUFFERED, FILE_ANY_ACCESS)
 ```
 
 Send PID to Driver, then driver will hide the process.
+
+### Hide Process By Set EPROCESS ImageFileName
+
+```c
+#define IOCTL_SET_IMAGE_NAME \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x6667, METHOD_BUFFERED, FILE_ANY_ACCESS)
+```
+
+Set the SET_IMAGE_NAME to driver, then will set **new string** to cover the old iamge file name 
+
+```c
+typedef struct SET_IMAGE_NAME {
+    UCHAR bImageName[250]; // new image name string
+    UINT64 pid;            // the specify process id
+}SET_IMAGE_NAME, *PSET_IMAGE_NAME ;
+```
 
 ## Env
 
